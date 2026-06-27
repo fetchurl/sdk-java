@@ -49,10 +49,8 @@ jobs:
           echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "Prepared $VERSION (not pushed until publish succeeds)" >> "$GITHUB_STEP_SUMMARY"
 
-      # Prefer base64 secrets (safe for special chars / newlines). Plain secrets still work as fallback.
       - name: Import GPG key
         if: env.RELEASE_VERSION != ''
-        id: import_gpg
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           GPG_PRIVATE_KEY_BASE64: ${{ secrets.GPG_PRIVATE_KEY_BASE64 }}
@@ -62,7 +60,9 @@ jobs:
           set -euo pipefail
 
           KEYFILE="$(mktemp)"
-          PASSFILE="$(mktemp)"
+          # Do NOT put the passphrase in GITHUB_ENV — Actions secret-masking corrupts
+          # multiline env blocks (Invalid value. Matching delimiter not found).
+          PASSFILE="${RUNNER_TEMP}/gpg-passphrase"
           python3 - "$KEYFILE" "$PASSFILE" <<'PY'
           import base64, os, pathlib, re, sys
 
@@ -73,12 +73,10 @@ jobs:
               s = "".join(s.split())
               return base64.b64decode(s.encode("ascii"), validate=False)
 
-          # --- passphrase (prefer base64) ---
           pp_b64 = (os.environ.get("GPG_PASSPHRASE_BASE64") or "").strip()
           pp_raw = os.environ.get("GPG_PASSPHRASE") or ""
           if pp_b64:
               passphrase = b64_decode(pp_b64).decode("utf-8")
-              # Trim a single trailing newline often added by `echo | base64`
               if passphrase.endswith("\n") and passphrase.count("\n") == 1:
                   passphrase = passphrase[:-1]
               pp_source = "GPG_PASSPHRASE_BASE64"
@@ -89,9 +87,9 @@ jobs:
               print("Set GPG_PASSPHRASE_BASE64 (preferred) or GPG_PASSPHRASE", file=sys.stderr)
               sys.exit(1)
           pass_out.write_text(passphrase)
+          pass_out.chmod(0o600)
           print(f"passphrase_source={pp_source} length={len(passphrase)}")
 
-          # --- private key (prefer base64) ---
           b64 = os.environ.get("GPG_PRIVATE_KEY_BASE64") or ""
           raw = os.environ.get("GPG_PRIVATE_KEY") or ""
 
@@ -137,13 +135,6 @@ jobs:
               sys.exit(1)
           PY
 
-          # Passphrase for this job (maven-gpg-plugin reads MAVEN_GPG_PASSPHRASE)
-          {
-            echo "MAVEN_GPG_PASSPHRASE<<GPGPASS_EOF"
-            cat "$PASSFILE"
-            echo "GPGPASS_EOF"
-          } >> "$GITHUB_ENV"
-
           mkdir -p ~/.gnupg
           chmod 700 ~/.gnupg
           printf '%s\n' 'allow-loopback-pinentry' 'default-cache-ttl 3600' 'max-cache-ttl 3600' > ~/.gnupg/gpg-agent.conf
@@ -153,17 +144,9 @@ jobs:
           gpg --batch --status-fd 1 --import "$KEYFILE" 2>&1 | tee /tmp/gpg-import.log | sed 's/^/gpg-import: /'
           rm -f "$KEYFILE"
 
-          if ! grep -qE 'IMPORT_OK|SECRET_KEY_IMPORTED|IMPORT_RES [1-9]' /tmp/gpg-import.log \
-            && ! gpg --batch --list-secret-keys --with-colons | grep -q '^sec:'; then
-            echo "GPG import produced no secret keys. Prefer GPG_PRIVATE_KEY_BASE64." >&2
-            cat /tmp/gpg-import.log >&2 || true
-            rm -f "$PASSFILE"
-            exit 1
-          fi
-
           if ! gpg --batch --list-secret-keys --with-colons | grep -q '^sec:'; then
-            echo "Still no secret keys after import" >&2
-            rm -f "$PASSFILE"
+            echo "GPG import produced no secret keys" >&2
+            cat /tmp/gpg-import.log >&2 || true
             exit 1
           fi
 
@@ -174,21 +157,26 @@ jobs:
 
           gpg --batch --yes --pinentry-mode loopback --passphrase-file "$PASSFILE" \
             --local-user "$FPR" --clearsign -o /tmp/gpg-unlock.asc <<<'unlock' \
-            || { echo "Passphrase does not unlock the imported key" >&2; rm -f "$PASSFILE"; exit 1; }
-          rm -f /tmp/gpg-unlock.asc "$PASSFILE"
+            || { echo "Passphrase does not unlock the imported key" >&2; exit 1; }
+          rm -f /tmp/gpg-unlock.asc
+          # Leave $PASSFILE for the publish step (same job, RUNNER_TEMP)
 
       - name: Publish to Maven Central
         if: env.RELEASE_VERSION != ''
         env:
           MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
-          # MAVEN_GPG_PASSPHRASE set in Import GPG key via GITHUB_ENV (decoded from base64 if used)
         run: |
           set -euo pipefail
-          if [[ -z "${MAVEN_GPG_PASSPHRASE:-}" ]]; then
-            echo "MAVEN_GPG_PASSPHRASE empty — set GPG_PASSPHRASE_BASE64 or GPG_PASSPHRASE" >&2
+          PASSFILE="${RUNNER_TEMP}/gpg-passphrase"
+          if [[ ! -f "$PASSFILE" ]]; then
+            echo "Missing $PASSFILE from import step" >&2
             exit 1
           fi
+          # Export in this step only — never via GITHUB_ENV (masking breaks delimiters)
+          export MAVEN_GPG_PASSPHRASE
+          MAVEN_GPG_PASSPHRASE="$(cat "$PASSFILE")"
+
           mkdir -p ~/.m2
           python3 - <<'PY'
           import os
@@ -213,6 +201,7 @@ jobs:
           )
           PY
           mvn -B -DskipTests deploy -Prelease -Dgpg.keyname="${GPG_KEYNAME}"
+          shred -u "$PASSFILE" 2>/dev/null || rm -f "$PASSFILE"
           echo "Published $RELEASE_VERSION to Maven Central (Sonatype Portal)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Push commit, tag, and GitHub release
