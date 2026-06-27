@@ -86,13 +86,3 @@ Clients **must** treat the server as untrusted and verify the hash (this SDK doe
 mise install   # Java 17, Maven, svu
 mvn -B test
 ```
-
-## Related
-
-| Repo | Role |
-|------|------|
-| [fetchurl/spec](https://github.com/fetchurl/spec) | Protocol |
-| [fetchurl/fetchurl](https://github.com/fetchurl/fetchurl) | Go server |
-| [fetchurl/sdk-js](https://github.com/fetchurl/sdk-js) | JavaScript SDK |
-| [fetchurl/sdk-python](https://github.com/fetchurl/sdk-python) | Python SDK |
-| [fetchurl/sdk-rust](https://github.com/fetchurl/sdk-rust) | Rust SDK |
