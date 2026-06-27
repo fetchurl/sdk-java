@@ -1,0 +1,203 @@
+#!/usr/bin/env -S python3 -u
+"""Bump version (svu), commit + tag locally. Push only via `push` after publish succeeds."""
+from __future__ import annotations
+
+import argparse
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+MANIFEST = ROOT / "pom.xml"
+MANIFEST_PATHS = [str(MANIFEST.relative_to(ROOT))]
+SVU_MODES = frozenset({"next", "major", "minor", "patch"})
+UPLOAD_GLOB: str | None = None
+VERSION_RE = re.compile(
+    r'(<artifactId>fetchurl-sdk</artifactId>\s*\n\s*<version>)[^<]+(</version>)',
+    re.M,
+)
+
+
+def log(msg: str) -> None:
+    print(msg, file=sys.stderr)
+
+
+def run(cmd: list[str], *, check: bool = True, capture: bool = False) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, cwd=ROOT, check=check, text=True, capture_output=capture)
+
+
+def run_out(cmd: list[str]) -> str:
+    return run(cmd, capture=True).stdout.strip()
+
+
+def resolve_version(mode: str) -> str:
+    mode = mode.lstrip("v")
+    if mode in SVU_MODES:
+        return run_out(["svu", mode]).lstrip("v")
+    return mode
+
+
+def write_manifest(version: str) -> None:
+    text = MANIFEST.read_text(encoding="utf-8")
+    if not VERSION_RE.search(text):
+        raise SystemExit("<artifactId>fetchurl-sdk</artifactId> / <version> not found in pom.xml")
+    MANIFEST.write_text(
+        VERSION_RE.sub(rf"\g<1>{version}\2", text, count=1),
+        encoding="utf-8",
+    )
+
+
+def read_manifest_version() -> str:
+    m = VERSION_RE.search(MANIFEST.read_text(encoding="utf-8"))
+    if not m:
+        raise SystemExit("could not read version from pom.xml")
+    # group 0 is full match; version is between group 1 prefix and group 2 suffix
+    full = m.group(0)
+    start = len(m.group(1))
+    end = len(full) - len(m.group(2))
+    return full[start:end]
+
+def git_commit_and_tag(version: str, paths: list[str]) -> None:
+    # Never let git write to stdout — CI captures only the version line from prepare.
+    if paths:
+        run(["git", "add", *paths], capture=True)
+    else:
+        run(["git", "add", "-A"], capture=True)
+    staged = run(["git", "diff", "--cached", "--quiet"], check=False, capture=True)
+    if staged.returncode != 0:
+        cp = run(["git", "commit", "-sm", f"bump to {version}"], capture=True)
+        if cp.stdout:
+            log(cp.stdout.rstrip())
+        if cp.stderr:
+            log(cp.stderr.rstrip())
+    else:
+        log("nothing to commit (manifest unchanged?)")
+    exists = run(["git", "rev-parse", "-q", "--verify", f"refs/tags/{version}"], check=False, capture=True)
+    if exists.returncode == 0:
+        run(["git", "tag", "-f", version], capture=True)
+        log(f"moved local tag {version}")
+    else:
+        run(["git", "tag", version], capture=True)
+        log(f"created local tag {version}")
+
+
+def push_release(version: str, *, upload_glob: str | None = None) -> None:
+    """Push branch + tag and create GitHub release. Call only after registry publish succeeds."""
+    branch = run_out(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+    for cmd in (
+        ["git", "push", "origin", f"HEAD:{branch}"],
+        ["git", "push", "origin", version],
+    ):
+        cp = run(cmd, capture=True)
+        if cp.stdout:
+            log(cp.stdout.rstrip())
+        if cp.stderr:
+            log(cp.stderr.rstrip())
+    chk = run(["gh", "release", "view", version], check=False, capture=True)
+    if chk.returncode == 0:
+        log(f"GitHub release {version} already exists")
+    else:
+        cp = run(
+            [
+                "gh",
+                "release",
+                "create",
+                version,
+                "--title",
+                f"Release {version}",
+                "--generate-notes",
+            ],
+            capture=True,
+        )
+        if cp.stdout:
+            log(cp.stdout.rstrip())
+        if cp.stderr:
+            log(cp.stderr.rstrip())
+    if upload_glob:
+        paths = sorted(ROOT.glob(upload_glob))
+        if paths:
+            cp = run(
+                ["gh", "release", "upload", version, *[str(p) for p in paths], "--clobber"],
+                capture=True,
+            )
+            if cp.stdout:
+                log(cp.stdout.rstrip())
+            if cp.stderr:
+                log(cp.stderr.rstrip())
+    log(f"pushed commit + tag + release {version}")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="./make_release",
+        description=(
+            "Bump version with svu, commit and tag locally. "
+            "Push commit/tag/GitHub release only via the push subcommand "
+            "(run after a successful registry publish)."
+        ),
+    )
+    sub = p.add_subparsers(dest="command", required=True)
+
+    prep = sub.add_parser(
+        "prepare",
+        help="svu → write manifest → local commit + local tag (no remote push)",
+    )
+    prep.add_argument(
+        "mode",
+        nargs="?",
+        default="next",
+        help="svu mode (next|major|minor|patch) or explicit x.y.z (default: next)",
+    )
+
+    push_p = sub.add_parser(
+        "push",
+        help="push branch + tag and create GitHub release (after successful publish)",
+    )
+    push_p.add_argument(
+        "version",
+        nargs="?",
+        default=None,
+        help="semver to push (default: version from manifest)",
+    )
+
+    for mode in sorted(SVU_MODES):
+        sp = sub.add_parser(mode, help=f"shorthand for: prepare {mode}")
+        sp.set_defaults(command="prepare", mode=mode)
+
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args_list = list(sys.argv[1:] if argv is None else argv)
+    # Bare semver → prepare <semver>
+    if (
+        args_list
+        and args_list[0] not in ("prepare", "push", "-h", "--help")
+        and args_list[0] not in SVU_MODES
+        and re.fullmatch(r"v?\d+\.\d+\.\d+", args_list[0])
+    ):
+        args_list = ["prepare", args_list[0].lstrip("v"), *args_list[1:]]
+
+    args = parser.parse_args(args_list)
+
+    if args.command == "prepare":
+        version = resolve_version(args.mode)
+        write_manifest(version)
+        git_commit_and_tag(version, MANIFEST_PATHS)
+        print(version)
+        return 0
+
+    if args.command == "push":
+        version = (args.version or read_manifest_version()).lstrip("v")
+        push_release(version, upload_glob=UPLOAD_GLOB)
+        print(version)
+        return 0
+
+    parser.error(f"unknown command {args.command!r}")
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,63 @@
+name: Autorelease
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      new_version:
+        description: "Version bump mode (svu) or explicit x.y.z"
+        type: choice
+        default: next
+        options: [next, patch, minor, major]
+
+jobs:
+  autorelease:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup git config
+        run: |
+          git config user.name actions-bot
+          git config user.email actions-bot@users.noreply.github.com
+
+      - uses: jdx/mise-action@6d1e696aa24c1aa1bcc1adea0212707c71ab78a8 # v3
+
+      - name: Unit tests
+        run: mvn -B test
+
+      - name: Prepare release (svu, commit, local tag)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          NEW_VERSION: ${{ github.event.inputs.new_version }}
+        run: |
+          VERSION="$(./make_release prepare "$NEW_VERSION")"
+          echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Prepared $VERSION (not pushed until publish succeeds)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish to Maven Central
+        if: env.RELEASE_VERSION != ''
+        env:
+          MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
+        run: |
+          if [[ -z "${MAVEN_USERNAME:-}" || -z "${MAVEN_PASSWORD:-}" ]]; then
+            echo "MAVEN_USERNAME / MAVEN_PASSWORD not set; skipping deploy (configure Sonatype/Central secrets)."
+            exit 1
+          fi
+          # Wire settings.xml / central-publishing plugin in a follow-up when credentials exist.
+          mvn -B -DskipTests package
+          echo "Artifact built for $RELEASE_VERSION; configure maven-deploy / Central Portal to complete publish."
+
+      - name: Push commit, tag, and GitHub release
+        if: env.RELEASE_VERSION != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./make_release push "$RELEASE_VERSION"
