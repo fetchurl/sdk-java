@@ -39,35 +39,86 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="$(./make_release prepare "$NEW_VERSION")"
-          # No tags yet: svu "next" is often 0.0.0 — fall back to POM or 0.1.0.
           if [[ "$VERSION" == "0.0.0" || "$VERSION" == "v0.0.0" ]]; then
             POM_VER="$(python3 -c "import re,pathlib; t=pathlib.Path('pom.xml').read_text(); m=re.search(r'<artifactId>fetchurl-sdk</artifactId>\s*<version>([^<]+)</version>', t); print(m.group(1) if m else '')")"
-            if [[ -n "$POM_VER" && "$POM_VER" != "0.0.0" ]]; then
-              FALLBACK="$POM_VER"
-            else
-              FALLBACK="0.1.0"
-            fi
+            FALLBACK="${POM_VER:-0.1.0}"
+            [[ "$FALLBACK" == "0.0.0" ]] && FALLBACK="0.1.0"
             echo "svu returned $VERSION; re-preparing as $FALLBACK" >> "$GITHUB_STEP_SUMMARY"
             VERSION="$(./make_release prepare "$FALLBACK")"
           fi
           echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "Prepared $VERSION (not pushed until publish succeeds)" >> "$GITHUB_STEP_SUMMARY"
 
+      # Prefer base64 secret (newlines-safe). Falls back to armored GPG_PRIVATE_KEY with repair.
       - name: Import GPG key
         if: env.RELEASE_VERSION != ''
+        id: import_gpg
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PRIVATE_KEY_BASE64: ${{ secrets.GPG_PRIVATE_KEY_BASE64 }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           set -euo pipefail
-          if [[ -z "${GPG_PRIVATE_KEY:-}" ]]; then
-            echo "GPG_PRIVATE_KEY secret is not set" >&2
-            exit 1
-          fi
           if [[ -z "${GPG_PASSPHRASE:-}" ]]; then
             echo "GPG_PASSPHRASE secret is not set" >&2
             exit 1
           fi
+
+          KEYFILE="$(mktemp)"
+          python3 - "$KEYFILE" <<'PY'
+          import base64, os, pathlib, re, sys
+
+          out = pathlib.Path(sys.argv[1])
+          b64 = os.environ.get("GPG_PRIVATE_KEY_BASE64") or ""
+          raw = os.environ.get("GPG_PRIVATE_KEY") or ""
+
+          if b64.strip():
+              # Newlines-safe path (recommended)
+              data = base64.b64decode(b64.strip().encode("ascii"), validate=False)
+              text = data.decode("utf-8", errors="replace")
+              source = "GPG_PRIVATE_KEY_BASE64"
+          elif raw.strip():
+              text = raw
+              source = "GPG_PRIVATE_KEY"
+              # Literal backslash-n (password manager paste)
+              if "BEGIN PGP" not in text and "\\n" in text:
+                  text = text.encode("utf-8").decode("unicode_escape")
+              text = text.replace("\r\n", "\n").replace("\r", "\n")
+              # Entire armor crushed onto one line — rebuild standard armor lines
+              if "BEGIN PGP" in text and text.count("\n") < 3:
+                  m = re.search(
+                      r"-----BEGIN PGP (PRIVATE|SECRET) KEY BLOCK-----(.*)-----END PGP (PRIVATE|SECRET) KEY BLOCK-----",
+                      text,
+                      re.S,
+                  )
+                  if m:
+                      kind = m.group(1)
+                      body = re.sub(r"\s+", "", m.group(2))
+                      # Optional headers (Comment:, Version:) end at first blank in real armor;
+                      # for crushed keys there usually are none — treat all as base64 body.
+                      lines = [body[i : i + 64] for i in range(0, len(body), 64)]
+                      text = (
+                          f"-----BEGIN PGP {kind} KEY BLOCK-----\n"
+                          + "\n".join(lines)
+                          + f"\n-----END PGP {kind} KEY BLOCK-----\n"
+                      )
+          else:
+              print("Set GPG_PRIVATE_KEY_BASE64 (preferred) or GPG_PRIVATE_KEY", file=sys.stderr)
+              sys.exit(1)
+
+          text = text.replace("\r\n", "\n").replace("\r", "\n")
+          if not text.endswith("\n"):
+              text += "\n"
+          out.write_text(text)
+
+          lines = text.count("\n")
+          has_priv = "BEGIN PGP PRIVATE KEY BLOCK" in text or "BEGIN PGP SECRET KEY BLOCK" in text
+          has_end = "END PGP PRIVATE KEY BLOCK" in text or "END PGP SECRET KEY BLOCK" in text
+          print(f"source={source} bytes={len(text)} lines={lines} has_private_header={has_priv} has_end={has_end}")
+          if not has_priv or not has_end:
+              print("Armor headers incomplete after decode/repair", file=sys.stderr)
+              sys.exit(1)
+          PY
 
           mkdir -p ~/.gnupg
           chmod 700 ~/.gnupg
@@ -75,34 +126,19 @@ jobs:
           printf '%s\n' 'use-agent' 'pinentry-mode loopback' > ~/.gnupg/gpg.conf
           gpgconf --kill gpg-agent 2>/dev/null || true
 
-          KEYFILE="$(mktemp)"
-          # Preserve exact secret body (newlines). Also accept secrets stored with literal \n.
-          python3 - "$KEYFILE" <<'PY'
-          import os, pathlib, sys
-          out = pathlib.Path(sys.argv[1])
-          raw = os.environ["GPG_PRIVATE_KEY"]
-          if "BEGIN PGP" not in raw and "\\n" in raw:
-              raw = raw.encode("utf-8").decode("unicode_escape")
-          # Normalize Windows newlines
-          raw = raw.replace("\r\n", "\n").replace("\r", "\n")
-          if not raw.endswith("\n"):
-              raw += "\n"
-          out.write_text(raw)
-          PY
+          # Show import status (no key material)
+          gpg --batch --status-fd 1 --import "$KEYFILE" 2>&1 | tee /tmp/gpg-import.log | sed 's/^/gpg-import: /'
+          rm -f "$KEYFILE"
 
-          if ! grep -qE 'BEGIN PGP (PRIVATE|SECRET) KEY BLOCK' "$KEYFILE"; then
-            echo "GPG_PRIVATE_KEY is not an armored private key (need BEGIN PGP PRIVATE KEY BLOCK)" >&2
-            echo "Preview: $(head -c 60 "$KEYFILE" | tr -cd '[:print:]\n')" >&2
+          if ! grep -qE 'IMPORT_OK|SECRET_KEY_IMPORTED|IMPORT_RES [1-9]' /tmp/gpg-import.log \
+            && ! gpg --batch --list-secret-keys --with-colons | grep -q '^sec:'; then
+            echo "GPG import produced no secret keys. Re-upload with base64 (see workflow docs in PR/commit)." >&2
+            cat /tmp/gpg-import.log >&2 || true
             exit 1
           fi
 
-          gpg --batch --import "$KEYFILE"
-          rm -f "$KEYFILE"
-
           if ! gpg --batch --list-secret-keys --with-colons | grep -q '^sec:'; then
-            echo "Import reported success but no secret keys are present." >&2
-            echo "Re-set GPG_PRIVATE_KEY from: gpg --export-secret-keys --armor <FINGERPRINT>" >&2
-            gpg --batch --list-keys || true
+            echo "Still no secret keys after import" >&2
             exit 1
           fi
 
@@ -111,7 +147,6 @@ jobs:
           echo "GPG_KEYNAME=$FPR" >> "$GITHUB_ENV"
           echo "Using signing key $FPR"
 
-          # Warm agent / verify passphrase works
           printf '%s' "$GPG_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 \
             --local-user "$FPR" --clearsign -o /tmp/gpg-unlock.asc <<<'unlock' \
             || { echo "Passphrase does not unlock the imported key" >&2; exit 1; }
@@ -125,19 +160,6 @@ jobs:
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           set -euo pipefail
-          if [[ -z "${MAVEN_USERNAME:-}" || -z "${MAVEN_PASSWORD:-}" ]]; then
-            echo "MAVEN_USERNAME / MAVEN_PASSWORD not set" >&2
-            exit 1
-          fi
-          if [[ -z "${MAVEN_GPG_PASSPHRASE:-}" ]]; then
-            echo "GPG_PASSPHRASE not set" >&2
-            exit 1
-          fi
-          if ! gpg --batch --list-secret-keys --with-colons | grep -q '^sec:'; then
-            echo "No GPG secret key in keyring" >&2
-            exit 1
-          fi
-
           mkdir -p ~/.m2
           python3 - <<'PY'
           import os
@@ -161,8 +183,6 @@ jobs:
           """
           )
           PY
-
-          # Passphrase via MAVEN_GPG_PASSPHRASE (maven-gpg-plugin 3.2+); key from import step
           mvn -B -DskipTests deploy -Prelease -Dgpg.keyname="${GPG_KEYNAME}"
           echo "Published $RELEASE_VERSION to Maven Central (Sonatype Portal)" >> "$GITHUB_STEP_SUMMARY"
 
