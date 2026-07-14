@@ -108,4 +108,20 @@ class FetchSessionTest {
         assertTrue(parsed.contains("http://src1"));
         assertTrue(parsed.contains("http://src2"));
     }
+
+    @Test
+    void lowercasesHashInServerUrl() throws Exception {
+        String h = sha256Hex("test".getBytes(StandardCharsets.UTF_8));
+        String upper = h.toUpperCase();
+        FetchSession session =
+                FetchSession.withServers(
+                        Collections.singletonList("http://cache/api/fetchurl"),
+                        "sha256",
+                        upper,
+                        Collections.singletonList("http://src"));
+        FetchAttempt attempt = session.nextAttempt().orElseThrow(AssertionError::new);
+        assertTrue(
+                attempt.getUrl().endsWith("/sha256/" + h),
+                "server URL must use lowercase hash, got " + attempt.getUrl());
+    }
 }

@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
@@ -58,7 +59,8 @@ public final class FetchSession {
             throw new UnsupportedAlgorithmException(normalized);
         }
         this.algo = normalized;
-        this.hash = hash;
+        // Spec: hashes MUST be lowercase hex. Normalize so mixed-case callers still work.
+        this.hash = hash == null ? null : hash.toLowerCase(Locale.ROOT);
         this.attempts = new ArrayList<>();
 
         List<String> serverList = servers != null ? servers : Collections.emptyList();
@@ -66,7 +68,7 @@ public final class FetchSession {
 
         for (String server : serverList) {
             String base = trimTrailingSlashes(server);
-            String url = base + "/" + this.algo + "/" + hash;
+            String url = base + "/" + this.algo + "/" + this.hash;
             Map<String, String> headers = new LinkedHashMap<>();
             if (!sourceHeader.isEmpty()) {
                 headers.put("X-Source-Urls", sourceHeader);

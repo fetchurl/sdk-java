@@ -36,4 +36,15 @@ class HashVerifierTest {
         HashMismatchException ex = assertThrows(HashMismatchException.class, v::finish);
         assertEquals(wrong, ex.getExpected());
     }
+
+    @Test
+    void acceptsUppercaseExpectedHex() throws Exception {
+        byte[] data = "hello world".getBytes(StandardCharsets.UTF_8);
+        String h = sha256Hex(data).toUpperCase();
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        HashVerifier v = new HashVerifier("sha256", h, out);
+        v.write(data);
+        v.finish();
+        assertArrayEquals(data, out.toByteArray());
+    }
 }
