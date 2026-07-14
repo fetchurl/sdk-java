@@ -1,5 +1,6 @@
 package io.github.fetchurl;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -9,6 +10,7 @@ import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -54,5 +56,53 @@ class JdkHttpClientFetcherTest {
                 ex.getClass().getName().contains("Timeout")
                         || (ex.getMessage() != null && ex.getMessage().toLowerCase().contains("timed")),
                 "expected timeout IOException, got " + ex);
+    }
+
+    @Test
+    void sendsDefaultUserAgent() throws Exception {
+        AtomicReference<String> userAgent = new AtomicReference<>();
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext(
+                "/",
+                exchange -> {
+                    userAgent.set(exchange.getRequestHeaders().getFirst("User-Agent"));
+                    byte[] body = new byte[0];
+                    exchange.sendResponseHeaders(200, body.length);
+                    exchange.getResponseBody().close();
+                });
+        server.setExecutor(Executors.newCachedThreadPool());
+        server.start();
+
+        String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/";
+        try (java.io.InputStream ignored =
+                new JdkHttpClientFetcher().get(url, Collections.emptyMap()).getBody()) {
+            // consume
+        }
+        assertEquals(JdkHttpClientFetcher.DEFAULT_USER_AGENT, userAgent.get());
+    }
+
+    @Test
+    void callerUserAgentWins() throws Exception {
+        AtomicReference<String> userAgent = new AtomicReference<>();
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext(
+                "/",
+                exchange -> {
+                    userAgent.set(exchange.getRequestHeaders().getFirst("User-Agent"));
+                    byte[] body = new byte[0];
+                    exchange.sendResponseHeaders(200, body.length);
+                    exchange.getResponseBody().close();
+                });
+        server.setExecutor(Executors.newCachedThreadPool());
+        server.start();
+
+        String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/";
+        try (java.io.InputStream ignored =
+                new JdkHttpClientFetcher()
+                        .get(url, Collections.singletonMap("User-Agent", "my-app/1"))
+                        .getBody()) {
+            // consume
+        }
+        assertEquals("my-app/1", userAgent.get());
     }
 }
