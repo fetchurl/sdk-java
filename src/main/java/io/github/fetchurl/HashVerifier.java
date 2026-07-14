@@ -17,6 +17,7 @@ public final class HashVerifier extends OutputStream {
     private final String expectedHash;
     private long bytesWritten;
     private boolean closed;
+    private boolean finished;
 
     public HashVerifier(String algo, String expectedHash, OutputStream out) {
         this.out = Objects.requireNonNull(out, "out");
@@ -35,8 +36,15 @@ public final class HashVerifier extends OutputStream {
         return bytesWritten;
     }
 
+    private void ensureWritable() throws IOException {
+        if (closed || finished) {
+            throw new IOException("HashVerifier is closed");
+        }
+    }
+
     @Override
     public void write(int b) throws IOException {
+        ensureWritable();
         out.write(b);
         digest.update((byte) b);
         bytesWritten++;
@@ -44,6 +52,7 @@ public final class HashVerifier extends OutputStream {
 
     @Override
     public void write(byte[] b, int off, int len) throws IOException {
+        ensureWritable();
         out.write(b, off, len);
         digest.update(b, off, len);
         bytesWritten += len;
@@ -51,6 +60,9 @@ public final class HashVerifier extends OutputStream {
 
     @Override
     public void flush() throws IOException {
+        if (closed) {
+            throw new IOException("HashVerifier is closed");
+        }
         out.flush();
     }
 
@@ -65,9 +77,16 @@ public final class HashVerifier extends OutputStream {
     /**
      * Finalize the hash and verify it matches the expected value.
      *
+     * <p>May be called only once. Further {@link #write} calls fail.
+     *
      * @throws HashMismatchException if the digest does not match
+     * @throws IllegalStateException if {@code finish()} was already called
      */
     public void finish() {
+        if (finished) {
+            throw new IllegalStateException("HashVerifier already finished");
+        }
+        finished = true;
         String actual = toHex(digest.digest());
         if (!actual.equals(expectedHash)) {
             throw new HashMismatchException(expectedHash, actual);
