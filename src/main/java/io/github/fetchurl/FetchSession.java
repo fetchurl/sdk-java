@@ -58,9 +58,12 @@ public final class FetchSession {
         if (!Algo.isSupported(normalized)) {
             throw new UnsupportedAlgorithmException(normalized);
         }
+        if (hash == null || hash.isBlank()) {
+            throw new FetchUrlException("hash is required");
+        }
         this.algo = normalized;
         // Spec: hashes MUST be lowercase hex. Normalize so mixed-case callers still work.
-        this.hash = hash == null ? null : hash.toLowerCase(Locale.ROOT);
+        this.hash = hash.toLowerCase(Locale.ROOT);
         this.attempts = new ArrayList<>();
 
         List<String> serverList = servers != null ? servers : Collections.emptyList();
