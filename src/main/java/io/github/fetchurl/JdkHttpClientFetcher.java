@@ -11,16 +11,32 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
 
-/** {@link Fetcher} using {@link java.net.http.HttpClient} (Java 11+, zero extra deps). */
+/**
+ * {@link Fetcher} using {@link java.net.http.HttpClient} (Java 11+, zero extra deps).
+ *
+ * <p>The default client uses a 30s connect timeout. Each GET also has a request timeout (default
+ * 60s) so a stalled peer after connect cannot hang the caller forever.
+ */
 public final class JdkHttpClientFetcher implements Fetcher {
+    static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(30);
+    static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofSeconds(60);
+
     private final HttpClient client;
+    private final Duration requestTimeout;
 
     public JdkHttpClientFetcher() {
-        this(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(30)).build());
+        this(
+                HttpClient.newBuilder().connectTimeout(DEFAULT_CONNECT_TIMEOUT).build(),
+                DEFAULT_REQUEST_TIMEOUT);
     }
 
     public JdkHttpClientFetcher(HttpClient client) {
+        this(client, DEFAULT_REQUEST_TIMEOUT);
+    }
+
+    public JdkHttpClientFetcher(HttpClient client, Duration requestTimeout) {
         this.client = Objects.requireNonNull(client, "client");
+        this.requestTimeout = Objects.requireNonNull(requestTimeout, "requestTimeout");
     }
 
     public static JdkHttpClientFetcher of(HttpClient client) {
@@ -29,7 +45,8 @@ public final class JdkHttpClientFetcher implements Fetcher {
 
     @Override
     public FetchResponse get(String url, Map<String, String> headers) throws IOException {
-        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(url)).GET();
+        HttpRequest.Builder builder =
+                HttpRequest.newBuilder(URI.create(url)).timeout(requestTimeout).GET();
         if (headers != null) {
             for (Map.Entry<String, String> e : headers.entrySet()) {
                 builder.header(e.getKey(), e.getValue());
