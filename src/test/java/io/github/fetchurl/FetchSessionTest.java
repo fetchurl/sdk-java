@@ -124,4 +124,28 @@ class FetchSessionTest {
                 attempt.getUrl().endsWith("/sha256/" + h),
                 "server URL must use lowercase hash, got " + attempt.getUrl());
     }
+
+    @Test
+    void nullHashRejected() {
+        assertThrows(
+                FetchUrlException.class,
+                () ->
+                        FetchSession.withServers(
+                                Collections.emptyList(),
+                                "sha256",
+                                null,
+                                Collections.singletonList("http://src")));
+    }
+
+    @Test
+    void blankHashRejected() {
+        assertThrows(
+                FetchUrlException.class,
+                () ->
+                        FetchSession.withServers(
+                                Collections.emptyList(),
+                                "sha256",
+                                "   ",
+                                Collections.singletonList("http://src")));
+    }
 }
