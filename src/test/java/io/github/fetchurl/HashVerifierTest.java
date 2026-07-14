@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import org.junit.jupiter.api.Test;
@@ -46,5 +47,28 @@ class HashVerifierTest {
         v.write(data);
         v.finish();
         assertArrayEquals(data, out.toByteArray());
+    }
+
+    @Test
+    void finishIsOnceOnly() throws Exception {
+        byte[] data = "hello world".getBytes(StandardCharsets.UTF_8);
+        String h = sha256Hex(data);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        HashVerifier v = new HashVerifier("sha256", h, out);
+        v.write(data);
+        v.finish();
+        assertThrows(IllegalStateException.class, v::finish);
+    }
+
+    @Test
+    void writeAfterFinishFails() throws Exception {
+        byte[] data = "hello world".getBytes(StandardCharsets.UTF_8);
+        String h = sha256Hex(data);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        HashVerifier v = new HashVerifier("sha256", h, out);
+        v.write(data);
+        v.finish();
+        assertThrows(IOException.class, () -> v.write(1));
+        assertThrows(IOException.class, () -> v.write(data, 0, data.length));
     }
 }
