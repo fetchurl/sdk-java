@@ -20,6 +20,8 @@ import java.util.Objects;
 public final class JdkHttpClientFetcher implements Fetcher {
     static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(30);
     static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofSeconds(60);
+    /** Default User-Agent so operators can identify SDK traffic in access logs. */
+    static final String DEFAULT_USER_AGENT = "fetchurl-sdk";
 
     private final HttpClient client;
     private final Duration requestTimeout;
@@ -47,10 +49,17 @@ public final class JdkHttpClientFetcher implements Fetcher {
     public FetchResponse get(String url, Map<String, String> headers) throws IOException {
         HttpRequest.Builder builder =
                 HttpRequest.newBuilder(URI.create(url)).timeout(requestTimeout).GET();
+        boolean hasUserAgent = false;
         if (headers != null) {
             for (Map.Entry<String, String> e : headers.entrySet()) {
+                if ("user-agent".equalsIgnoreCase(e.getKey())) {
+                    hasUserAgent = true;
+                }
                 builder.header(e.getKey(), e.getValue());
             }
+        }
+        if (!hasUserAgent) {
+            builder.header("User-Agent", DEFAULT_USER_AGENT);
         }
         try {
             HttpResponse<InputStream> resp =
