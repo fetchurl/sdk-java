@@ -4,7 +4,6 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.Locale;
 import java.util.Objects;
 
 /**
@@ -21,10 +20,9 @@ public final class HashVerifier extends OutputStream {
 
     public HashVerifier(String algo, String expectedHash, OutputStream out) {
         this.out = Objects.requireNonNull(out, "out");
-        // Spec: hashes MUST be lowercase hex. Normalize so mixed-case callers still work.
-        this.expectedHash =
-                Objects.requireNonNull(expectedHash, "expectedHash").toLowerCase(Locale.ROOT);
         String normalized = Algo.normalize(algo);
+        // Spec: hashes MUST be lowercase hex of the full digest. Fail early on garbage.
+        this.expectedHash = Algo.normalizeContentHash(normalized, expectedHash);
         try {
             this.digest = MessageDigest.getInstance(Algo.messageDigestName(normalized));
         } catch (NoSuchAlgorithmException e) {

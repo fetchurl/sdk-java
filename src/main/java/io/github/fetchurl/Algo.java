@@ -34,6 +34,60 @@ public final class Algo {
         return SUPPORTED.contains(normalize(algo));
     }
 
+    /**
+     * Expected hex length of a full digest for a normalized algorithm name.
+     *
+     * @throws UnsupportedAlgorithmException if the algorithm is not supported
+     */
+    public static int expectedHexLength(String normalizedAlgo) {
+        switch (normalizedAlgo) {
+            case "sha1":
+                return 40;
+            case "sha256":
+                return 64;
+            case "sha512":
+                return 128;
+            default:
+                throw new UnsupportedAlgorithmException(normalizedAlgo);
+        }
+    }
+
+    /**
+     * Normalize a content hash per the fetchurl spec: full-length lowercase hex.
+     *
+     * <p>Rejects null, blank, non-hex, and wrong-length values before any network I/O.
+     *
+     * @param normalizedAlgo already-{@link #normalize(String) normalized} algorithm name
+     * @param hash expected hash (mixed case accepted)
+     * @return lowercase hex of the correct length for {@code normalizedAlgo}
+     * @throws FetchUrlException if the hash is missing or not valid hex for the algorithm
+     * @throws UnsupportedAlgorithmException if {@code normalizedAlgo} is not supported
+     */
+    public static String normalizeContentHash(String normalizedAlgo, String hash) {
+        if (hash == null || hash.isBlank()) {
+            throw new FetchUrlException("hash is required");
+        }
+        int expectedLen = expectedHexLength(normalizedAlgo);
+        String lower = hash.toLowerCase(Locale.ROOT);
+        if (lower.length() != expectedLen) {
+            throw new FetchUrlException(
+                    "hash must be "
+                            + expectedLen
+                            + " hex characters for "
+                            + normalizedAlgo
+                            + " (got "
+                            + lower.length()
+                            + ")");
+        }
+        for (int i = 0; i < lower.length(); i++) {
+            char c = lower.charAt(i);
+            if ((c < '0' || c > '9') && (c < 'a' || c > 'f')) {
+                throw new FetchUrlException("hash must be hexadecimal");
+            }
+        }
+        return lower;
+    }
+
     /** Map normalized algo to {@link java.security.MessageDigest} name. */
     static String messageDigestName(String normalizedAlgo) {
         switch (normalizedAlgo) {
