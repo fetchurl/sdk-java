@@ -5,7 +5,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
@@ -58,12 +57,9 @@ public final class FetchSession {
         if (!Algo.isSupported(normalized)) {
             throw new UnsupportedAlgorithmException(normalized);
         }
-        if (hash == null || hash.isBlank()) {
-            throw new FetchUrlException("hash is required");
-        }
         this.algo = normalized;
-        // Spec: hashes MUST be lowercase hex. Normalize so mixed-case callers still work.
-        this.hash = hash.toLowerCase(Locale.ROOT);
+        // Spec: hashes MUST be lowercase hex of the full digest. Fail early on garbage.
+        this.hash = Algo.normalizeContentHash(normalized, hash);
         this.attempts = new ArrayList<>();
 
         List<String> serverList = servers != null ? servers : Collections.emptyList();

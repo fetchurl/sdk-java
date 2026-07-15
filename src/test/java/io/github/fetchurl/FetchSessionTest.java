@@ -148,4 +148,28 @@ class FetchSessionTest {
                                 "   ",
                                 Collections.singletonList("http://src")));
     }
+
+    @Test
+    void nonHexHashRejected() {
+        assertThrows(
+                FetchUrlException.class,
+                () ->
+                        FetchSession.withServers(
+                                Collections.emptyList(),
+                                "sha256",
+                                "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+                                Collections.singletonList("http://src")));
+    }
+
+    @Test
+    void wrongLengthHashRejected() {
+        assertThrows(
+                FetchUrlException.class,
+                () ->
+                        FetchSession.withServers(
+                                Collections.emptyList(),
+                                "sha256",
+                                "abcd",
+                                Collections.singletonList("http://src")));
+    }
 }

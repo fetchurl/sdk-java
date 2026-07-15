@@ -71,4 +71,24 @@ class HashVerifierTest {
         assertThrows(IOException.class, () -> v.write(1));
         assertThrows(IOException.class, () -> v.write(data, 0, data.length));
     }
+
+    @Test
+    void rejectsNonHexExpected() {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        String bad =
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b85g";
+        assertThrows(FetchUrlException.class, () -> new HashVerifier("sha256", bad, out));
+    }
+
+    @Test
+    void rejectsWrongLengthExpected() {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        assertThrows(FetchUrlException.class, () -> new HashVerifier("sha256", "abcd", out));
+    }
+
+    @Test
+    void rejectsBlankExpected() {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        assertThrows(FetchUrlException.class, () -> new HashVerifier("sha256", "  ", out));
+    }
 }
