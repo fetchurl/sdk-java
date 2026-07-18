@@ -53,6 +53,14 @@ public final class FetchSession {
         if (sourceUrls == null || sourceUrls.isEmpty()) {
             throw new MissingSourceUrlsException();
         }
+        // Fail early on null/blank entries — same spirit as hash validation before any I/O.
+        List<String> sources = new ArrayList<>(sourceUrls.size());
+        for (String sourceUrl : sourceUrls) {
+            if (sourceUrl == null || sourceUrl.isBlank()) {
+                throw new FetchUrlException("source URL must not be blank");
+            }
+            sources.add(sourceUrl);
+        }
         String normalized = Algo.normalize(algo);
         if (!Algo.isSupported(normalized)) {
             throw new UnsupportedAlgorithmException(normalized);
@@ -63,10 +71,17 @@ public final class FetchSession {
         this.attempts = new ArrayList<>();
 
         List<String> serverList = servers != null ? servers : Collections.emptyList();
-        String sourceHeader = Sfv.encodeSourceUrls(sourceUrls);
+        String sourceHeader = Sfv.encodeSourceUrls(sources);
 
         for (String server : serverList) {
+            // SFV can yield empty strings (e.g. ""); skip rather than building a relative path.
+            if (server == null || server.isBlank()) {
+                continue;
+            }
             String base = trimTrailingSlashes(server);
+            if (base.isEmpty()) {
+                continue;
+            }
             String url = base + "/" + this.algo + "/" + this.hash;
             Map<String, String> headers = new LinkedHashMap<>();
             if (!sourceHeader.isEmpty()) {
@@ -75,7 +90,7 @@ public final class FetchSession {
             attempts.add(new FetchAttempt(url, headers));
         }
 
-        List<String> direct = new ArrayList<>(sourceUrls);
+        List<String> direct = new ArrayList<>(sources);
         Collections.shuffle(direct);
         for (String url : direct) {
             attempts.add(new FetchAttempt(url));
