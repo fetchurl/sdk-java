@@ -35,12 +35,16 @@ public final class Algo {
     }
 
     /**
-     * Expected hex length of a full digest for a normalized algorithm name.
+     * Expected hex length of a full digest for an algorithm name.
+     *
+     * <p>The name is {@link #normalize(String) normalized} first, matching {@link
+     * #isSupported(String)} so callers can pass either {@code "sha256"} or {@code "SHA-256"}.
      *
      * @throws UnsupportedAlgorithmException if the algorithm is not supported
      */
-    public static int expectedHexLength(String normalizedAlgo) {
-        switch (normalizedAlgo) {
+    public static int expectedHexLength(String algo) {
+        String normalized = normalize(algo);
+        switch (normalized) {
             case "sha1":
                 return 40;
             case "sha256":
@@ -48,33 +52,36 @@ public final class Algo {
             case "sha512":
                 return 128;
             default:
-                throw new UnsupportedAlgorithmException(normalizedAlgo);
+                throw new UnsupportedAlgorithmException(normalized);
         }
     }
 
     /**
      * Normalize a content hash per the fetchurl spec: full-length lowercase hex.
      *
-     * <p>Rejects null, blank, non-hex, and wrong-length values before any network I/O.
+     * <p>Rejects null, blank, non-hex, and wrong-length values before any network I/O. The
+     * algorithm name is {@link #normalize(String) normalized} first (same rules as {@link
+     * #isSupported(String)}).
      *
-     * @param normalizedAlgo already-{@link #normalize(String) normalized} algorithm name
+     * @param algo hash algorithm name (e.g. {@code "sha256"} or {@code "SHA-256"})
      * @param hash expected hash (mixed case accepted)
-     * @return lowercase hex of the correct length for {@code normalizedAlgo}
+     * @return lowercase hex of the correct length for {@code algo}
      * @throws FetchUrlException if the hash is missing or not valid hex for the algorithm
-     * @throws UnsupportedAlgorithmException if {@code normalizedAlgo} is not supported
+     * @throws UnsupportedAlgorithmException if {@code algo} is not supported
      */
-    public static String normalizeContentHash(String normalizedAlgo, String hash) {
+    public static String normalizeContentHash(String algo, String hash) {
         if (hash == null || hash.isBlank()) {
             throw new FetchUrlException("hash is required");
         }
-        int expectedLen = expectedHexLength(normalizedAlgo);
+        String normalized = normalize(algo);
+        int expectedLen = expectedHexLength(normalized);
         String lower = hash.toLowerCase(Locale.ROOT);
         if (lower.length() != expectedLen) {
             throw new FetchUrlException(
                     "hash must be "
                             + expectedLen
                             + " hex characters for "
-                            + normalizedAlgo
+                            + normalized
                             + " (got "
                             + lower.length()
                             + ")");
@@ -88,9 +95,10 @@ public final class Algo {
         return lower;
     }
 
-    /** Map normalized algo to {@link java.security.MessageDigest} name. */
-    static String messageDigestName(String normalizedAlgo) {
-        switch (normalizedAlgo) {
+    /** Map algo to {@link java.security.MessageDigest} name (normalizes first). */
+    static String messageDigestName(String algo) {
+        String normalized = normalize(algo);
+        switch (normalized) {
             case "sha1":
                 return "SHA-1";
             case "sha256":
@@ -98,7 +106,7 @@ public final class Algo {
             case "sha512":
                 return "SHA-512";
             default:
-                throw new UnsupportedAlgorithmException(normalizedAlgo);
+                throw new UnsupportedAlgorithmException(normalized);
         }
     }
 }
