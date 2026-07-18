@@ -44,9 +44,29 @@ class AlgoTest {
     }
 
     @Test
+    void expectedHexLengthAcceptsUnnormalizedNames() {
+        // Same acceptance surface as isSupported — not only pre-normalized tokens.
+        assertEquals(40, Algo.expectedHexLength("SHA-1"));
+        assertEquals(64, Algo.expectedHexLength("SHA-256"));
+        assertEquals(128, Algo.expectedHexLength("SHA_512"));
+    }
+
+    @Test
+    void expectedHexLengthRejectsUnsupported() {
+        assertThrows(UnsupportedAlgorithmException.class, () -> Algo.expectedHexLength("md5"));
+        assertThrows(UnsupportedAlgorithmException.class, () -> Algo.expectedHexLength("SHA-3"));
+    }
+
+    @Test
     void normalizeContentHashLowercases() {
         String upper = "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855";
         assertEquals(upper.toLowerCase(), Algo.normalizeContentHash("sha256", upper));
+    }
+
+    @Test
+    void normalizeContentHashAcceptsUnnormalizedAlgo() {
+        String upper = "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855";
+        assertEquals(upper.toLowerCase(), Algo.normalizeContentHash("SHA-256", upper));
     }
 
     @Test
