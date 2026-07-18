@@ -1,12 +1,14 @@
 package io.github.fetchurl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.concurrent.Executors;
@@ -104,5 +106,24 @@ class JdkHttpClientFetcherTest {
             // consume
         }
         assertEquals("my-app/1", userAgent.get());
+    }
+
+    @Test
+    void defaultConstructorReusesSharedClient() {
+        JdkHttpClientFetcher a = new JdkHttpClientFetcher();
+        JdkHttpClientFetcher b = new JdkHttpClientFetcher();
+        assertSame(JdkHttpClientFetcher.DEFAULT_CLIENT, a.client());
+        assertSame(JdkHttpClientFetcher.DEFAULT_CLIENT, b.client());
+        assertEquals(
+                JdkHttpClientFetcher.DEFAULT_CONNECT_TIMEOUT,
+                JdkHttpClientFetcher.DEFAULT_CLIENT.connectTimeout().orElseThrow());
+    }
+
+    @Test
+    void injectedClientIsNotReplacedByDefault() {
+        HttpClient custom =
+                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+        JdkHttpClientFetcher fetcher = new JdkHttpClientFetcher(custom);
+        assertSame(custom, fetcher.client());
     }
 }

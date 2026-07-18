@@ -16,6 +16,10 @@ import java.util.Objects;
  *
  * <p>The default client uses a 30s connect timeout. Each GET also has a request timeout (default
  * 60s) so a stalled peer after connect cannot hang the caller forever.
+ *
+ * <p>{@link HttpClient} is immutable and thread-safe; the no-arg constructor reuses a shared
+ * instance so callers do not spawn a new executor pool per {@code new JdkHttpClientFetcher()}.
+ * Pass your own client when you need a custom connect timeout, proxy, or SSL context.
  */
 public final class JdkHttpClientFetcher implements Fetcher {
     static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(30);
@@ -23,13 +27,18 @@ public final class JdkHttpClientFetcher implements Fetcher {
     /** Default User-Agent so operators can identify SDK traffic in access logs. */
     static final String DEFAULT_USER_AGENT = "fetchurl-sdk";
 
+    /**
+     * Shared client for {@link #JdkHttpClientFetcher()}. Building an {@link HttpClient} allocates
+     * an executor; reuse is the documented JDK expectation.
+     */
+    static final HttpClient DEFAULT_CLIENT =
+            HttpClient.newBuilder().connectTimeout(DEFAULT_CONNECT_TIMEOUT).build();
+
     private final HttpClient client;
     private final Duration requestTimeout;
 
     public JdkHttpClientFetcher() {
-        this(
-                HttpClient.newBuilder().connectTimeout(DEFAULT_CONNECT_TIMEOUT).build(),
-                DEFAULT_REQUEST_TIMEOUT);
+        this(DEFAULT_CLIENT, DEFAULT_REQUEST_TIMEOUT);
     }
 
     public JdkHttpClientFetcher(HttpClient client) {
@@ -39,6 +48,11 @@ public final class JdkHttpClientFetcher implements Fetcher {
     public JdkHttpClientFetcher(HttpClient client, Duration requestTimeout) {
         this.client = Objects.requireNonNull(client, "client");
         this.requestTimeout = Objects.requireNonNull(requestTimeout, "requestTimeout");
+    }
+
+    /** Package-visible for tests (shared-client identity). */
+    HttpClient client() {
+        return client;
     }
 
     public static JdkHttpClientFetcher of(HttpClient client) {
