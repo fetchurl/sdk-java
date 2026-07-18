@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -23,6 +24,50 @@ class FetchSessionTest {
         assertThrows(
                 MissingSourceUrlsException.class,
                 () -> FetchSession.withServers(Collections.emptyList(), "sha256", "abc", Collections.emptyList()));
+    }
+
+    @Test
+    void blankSourceUrlRejected() throws Exception {
+        String h = sha256Hex("test".getBytes(StandardCharsets.UTF_8));
+        assertThrows(
+                FetchUrlException.class,
+                () ->
+                        FetchSession.withServers(
+                                Collections.emptyList(),
+                                "sha256",
+                                h,
+                                Arrays.asList("http://src", "  ")));
+    }
+
+    @Test
+    void nullSourceUrlRejected() throws Exception {
+        String h = sha256Hex("test".getBytes(StandardCharsets.UTF_8));
+        List<String> urls = new ArrayList<>();
+        urls.add("http://src");
+        urls.add(null);
+        assertThrows(
+                FetchUrlException.class,
+                () -> FetchSession.withServers(Collections.emptyList(), "sha256", h, urls));
+    }
+
+    @Test
+    void blankServersSkipped() throws Exception {
+        String h = sha256Hex("test".getBytes(StandardCharsets.UTF_8));
+        List<String> servers = Arrays.asList("  ", "http://cache/api/fetchurl", "");
+        FetchSession session =
+                FetchSession.withServers(servers, "sha256", h, Collections.singletonList("http://src"));
+
+        Optional<FetchAttempt> a1 = session.nextAttempt();
+        assertTrue(a1.isPresent());
+        assertTrue(
+                a1.get().getUrl().startsWith("http://cache/api/fetchurl/sha256/"),
+                "blank servers must be skipped, got " + a1.get().getUrl());
+
+        Optional<FetchAttempt> a2 = session.nextAttempt();
+        assertTrue(a2.isPresent());
+        assertEquals("http://src", a2.get().getUrl());
+
+        assertFalse(session.nextAttempt().isPresent());
     }
 
     @Test
