@@ -8,7 +8,15 @@ import java.util.List;
 public final class Sfv {
     private Sfv() {}
 
-    /** Encode URLs as an RFC 8941 string list for the {@code X-Source-Urls} header. */
+    /**
+     * Encode URLs as an RFC 8941 string list for the {@code X-Source-Urls} header.
+     *
+     * <p>Rejects null, blank, and ASCII control characters so callers fail early instead of
+     * hitting {@code NullPointerException} or a late HTTP-client rejection when the value is
+     * used as a header.
+     *
+     * @throws FetchUrlException if any URL is null, blank, or contains a control character
+     */
     public static String encodeSourceUrls(List<String> urls) {
         if (urls == null || urls.isEmpty()) {
             return "";
@@ -19,6 +27,7 @@ public final class Sfv {
                 sb.append(", ");
             }
             String url = urls.get(i);
+            requireEncodableUrl(url);
             sb.append('"');
             for (int j = 0; j < url.length(); j++) {
                 char c = url.charAt(j);
@@ -30,6 +39,24 @@ public final class Sfv {
             sb.append('"');
         }
         return sb.toString();
+    }
+
+    /**
+     * Validate a URL before embedding it in an RFC 8941 string / HTTP header field.
+     *
+     * @throws FetchUrlException if {@code url} is null, blank, or contains ASCII controls
+     */
+    static void requireEncodableUrl(String url) {
+        if (url == null || url.isBlank()) {
+            throw new FetchUrlException("source URL must not be blank");
+        }
+        for (int i = 0; i < url.length(); i++) {
+            char c = url.charAt(i);
+            // ASCII controls and DEL are never valid in HTTP header field values (RFC 9110).
+            if (c < 0x20 || c == 0x7f) {
+                throw new FetchUrlException("source URL must not contain control characters");
+            }
+        }
     }
 
     /**
