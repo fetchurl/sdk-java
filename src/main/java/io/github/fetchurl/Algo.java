@@ -1,11 +1,37 @@
 package io.github.fetchurl;
 
 import java.util.Locale;
-import java.util.Set;
 
 /** Hash algorithm helpers per the fetchurl spec. */
 public final class Algo {
-    private static final Set<String> SUPPORTED = Set.of("sha1", "sha256", "sha512");
+    /**
+     * Algorithms in scope for this SDK. Single table so support checks, hex length, and
+     * {@link java.security.MessageDigest} names cannot drift.
+     */
+    private enum Known {
+        SHA1("sha1", "SHA-1", 40),
+        SHA256("sha256", "SHA-256", 64),
+        SHA512("sha512", "SHA-512", 128);
+
+        final String token;
+        final String messageDigestName;
+        final int hexLength;
+
+        Known(String token, String messageDigestName, int hexLength) {
+            this.token = token;
+            this.messageDigestName = messageDigestName;
+            this.hexLength = hexLength;
+        }
+
+        static Known find(String normalized) {
+            for (Known k : values()) {
+                if (k.token.equals(normalized)) {
+                    return k;
+                }
+            }
+            return null;
+        }
+    }
 
     private Algo() {}
 
@@ -31,7 +57,7 @@ public final class Algo {
 
     /** Check if a hash algorithm is supported ({@code sha1}, {@code sha256}, {@code sha512}). */
     public static boolean isSupported(String algo) {
-        return SUPPORTED.contains(normalize(algo));
+        return Known.find(normalize(algo)) != null;
     }
 
     /**
@@ -43,17 +69,7 @@ public final class Algo {
      * @throws UnsupportedAlgorithmException if the algorithm is not supported
      */
     public static int expectedHexLength(String algo) {
-        String normalized = normalize(algo);
-        switch (normalized) {
-            case "sha1":
-                return 40;
-            case "sha256":
-                return 64;
-            case "sha512":
-                return 128;
-            default:
-                throw new UnsupportedAlgorithmException(normalized);
-        }
+        return requireKnown(algo).hexLength;
     }
 
     /**
@@ -73,15 +89,14 @@ public final class Algo {
         if (hash == null || hash.isBlank()) {
             throw new FetchUrlException("hash is required");
         }
-        String normalized = normalize(algo);
-        int expectedLen = expectedHexLength(normalized);
+        Known known = requireKnown(algo);
         String lower = hash.toLowerCase(Locale.ROOT);
-        if (lower.length() != expectedLen) {
+        if (lower.length() != known.hexLength) {
             throw new FetchUrlException(
                     "hash must be "
-                            + expectedLen
+                            + known.hexLength
                             + " hex characters for "
-                            + normalized
+                            + known.token
                             + " (got "
                             + lower.length()
                             + ")");
@@ -97,16 +112,15 @@ public final class Algo {
 
     /** Map algo to {@link java.security.MessageDigest} name (normalizes first). */
     static String messageDigestName(String algo) {
+        return requireKnown(algo).messageDigestName;
+    }
+
+    private static Known requireKnown(String algo) {
         String normalized = normalize(algo);
-        switch (normalized) {
-            case "sha1":
-                return "SHA-1";
-            case "sha256":
-                return "SHA-256";
-            case "sha512":
-                return "SHA-512";
-            default:
-                throw new UnsupportedAlgorithmException(normalized);
+        Known known = Known.find(normalized);
+        if (known == null) {
+            throw new UnsupportedAlgorithmException(normalized);
         }
+        return known;
     }
 }
