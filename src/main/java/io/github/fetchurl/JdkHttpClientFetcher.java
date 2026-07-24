@@ -48,6 +48,11 @@ public final class JdkHttpClientFetcher implements Fetcher {
     public JdkHttpClientFetcher(HttpClient client, Duration requestTimeout) {
         this.client = Objects.requireNonNull(client, "client");
         this.requestTimeout = Objects.requireNonNull(requestTimeout, "requestTimeout");
+        // HttpRequest.Builder.timeout rejects zero/negative with IAE only when building.
+        // Fail at construction so misuse is obvious and matches the documented timeout guarantee.
+        if (requestTimeout.isZero() || requestTimeout.isNegative()) {
+            throw new IllegalArgumentException("requestTimeout must be positive");
+        }
     }
 
     /** Package-visible for tests (shared-client identity). */
@@ -61,23 +66,33 @@ public final class JdkHttpClientFetcher implements Fetcher {
 
     @Override
     public FetchResponse get(String url, Map<String, String> headers) throws IOException {
-        HttpRequest.Builder builder =
-                HttpRequest.newBuilder(URI.create(url)).timeout(requestTimeout).GET();
-        boolean hasUserAgent = false;
-        if (headers != null) {
-            for (Map.Entry<String, String> e : headers.entrySet()) {
-                if ("user-agent".equalsIgnoreCase(e.getKey())) {
-                    hasUserAgent = true;
+        Objects.requireNonNull(url, "url");
+        final HttpRequest request;
+        try {
+            HttpRequest.Builder builder =
+                    HttpRequest.newBuilder(URI.create(url)).timeout(requestTimeout).GET();
+            boolean hasUserAgent = false;
+            if (headers != null) {
+                for (Map.Entry<String, String> e : headers.entrySet()) {
+                    if ("user-agent".equalsIgnoreCase(e.getKey())) {
+                        hasUserAgent = true;
+                    }
+                    builder.header(e.getKey(), e.getValue());
                 }
-                builder.header(e.getKey(), e.getValue());
             }
-        }
-        if (!hasUserAgent) {
-            builder.header("User-Agent", DEFAULT_USER_AGENT);
+            if (!hasUserAgent) {
+                builder.header("User-Agent", DEFAULT_USER_AGENT);
+            }
+            request = builder.build();
+        } catch (IllegalArgumentException e) {
+            // URI.create and HttpRequest.Builder throw IAE for malformed URLs / invalid headers.
+            // Fetcher documents transport failures as IOException — keep that contract for callers
+            // who do not also catch RuntimeException (Fetchurl already catches Exception).
+            throw new IOException("invalid HTTP request: " + e.getMessage(), e);
         }
         try {
             HttpResponse<InputStream> resp =
-                    client.send(builder.build(), HttpResponse.BodyHandlers.ofInputStream());
+                    client.send(request, HttpResponse.BodyHandlers.ofInputStream());
             InputStream body = resp.body();
             if (body == null) {
                 body = new ByteArrayInputStream(new byte[0]);
