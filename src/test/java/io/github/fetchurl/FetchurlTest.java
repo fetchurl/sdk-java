@@ -2,6 +2,7 @@ package io.github.fetchurl;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.net.httpserver.HttpServer;
 import java.io.ByteArrayOutputStream;
@@ -12,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Collections;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -119,5 +121,51 @@ class FetchurlTest {
                         Collections.singletonList(goodUrl));
         Fetchurl.fetch(new JdkHttpClientFetcher(), session, out);
         assertArrayEquals(content, out.toByteArray());
+    }
+
+    @Test
+    void partialWriteOnFlakySinkDoesNotFallback() throws Exception {
+        // First source returns 200 with real body; destination accepts 3 bytes then fails.
+        // Without mayHaveWritten(), Fetchurl would treat bytesWritten==0 as clean and try the
+        // next source, appending into an already partially written stream.
+        byte[] content = "hello-world".getBytes(StandardCharsets.UTF_8);
+        String h = sha256Hex(content);
+        serverA = start(200, content);
+        serverB = start(200, content);
+        String urlA = urlOf(serverA);
+        String urlB = urlOf(serverB);
+
+        AtomicInteger accepted = new AtomicInteger();
+        OutputStream flaky =
+                new OutputStream() {
+                    @Override
+                    public void write(int b) throws IOException {
+                        if (accepted.get() >= 3) {
+                            throw new IOException("disk full");
+                        }
+                        accepted.incrementAndGet();
+                    }
+
+                    @Override
+                    public void write(byte[] b, int off, int len) throws IOException {
+                        for (int i = 0; i < len; i++) {
+                            write(b[off + i] & 0xff);
+                        }
+                    }
+                };
+
+        FetchSession session =
+                FetchSession.withServers(
+                        Collections.emptyList(),
+                        "sha256",
+                        h,
+                        java.util.Arrays.asList(urlA, urlB));
+        PartialWriteException ex =
+                assertThrows(
+                        PartialWriteException.class,
+                        () -> Fetchurl.fetch(new JdkHttpClientFetcher(), session, flaky));
+        assertTrue(ex.getCause() instanceof IOException);
+        // Session must stop; second source must not be attempted after a dirty sink.
+        assertTrue(session.nextAttempt().isEmpty());
     }
 }
