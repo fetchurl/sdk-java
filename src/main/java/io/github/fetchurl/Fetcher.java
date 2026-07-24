@@ -15,7 +15,9 @@ public interface Fetcher {
      *
      * @param url request URL
      * @param headers headers to send (may be empty)
-     * @return status code and readable body (caller may not fully consume on non-200)
+     * @return status code and readable body; the caller owns the response and must close it
+     *     (see {@link FetchResponse#close()}) when finished, including on non-200 status when the
+     *     body is not fully consumed
      * @throws IOException on transport failure
      */
     FetchResponse get(String url, Map<String, String> headers) throws IOException;
