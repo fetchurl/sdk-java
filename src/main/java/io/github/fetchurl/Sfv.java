@@ -50,11 +50,19 @@ public final class Sfv {
         if (url == null || url.isBlank()) {
             throw new FetchUrlException("source URL must not be blank");
         }
-        for (int i = 0; i < url.length(); i++) {
-            char c = url.charAt(i);
-            // ASCII controls and DEL are never valid in HTTP header field values (RFC 9110).
+        requireNoControlChars(url, "source URL");
+    }
+
+    /**
+     * Reject ASCII control characters and DEL (RFC 9110 header field-value / request-target).
+     *
+     * @throws FetchUrlException if {@code value} contains a control character
+     */
+    static void requireNoControlChars(String value, String what) {
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
             if (c < 0x20 || c == 0x7f) {
-                throw new FetchUrlException("source URL must not contain control characters");
+                throw new FetchUrlException(what + " must not contain control characters");
             }
         }
     }
