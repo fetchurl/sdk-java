@@ -15,6 +15,12 @@ public final class HashVerifier extends OutputStream {
     private final MessageDigest digest;
     private final String expectedHash;
     private long bytesWritten;
+    /**
+     * Set when {@code out.write} throws. {@link OutputStream#write(byte[], int, int)} may deliver
+     * some bytes before failing, so {@link #bytesWritten} alone under-reports and fallback must
+     * not append to the same destination.
+     */
+    private boolean writeFailedDirty;
     private boolean closed;
     private boolean finished;
 
@@ -34,6 +40,16 @@ public final class HashVerifier extends OutputStream {
         return bytesWritten;
     }
 
+    /**
+     * Whether the underlying stream may contain data from this verifier.
+     *
+     * <p>True after any successful write, or after a write that threw (partial delivery is
+     * possible). Used by {@link Fetchurl} to stop fallback once the destination is tainted.
+     */
+    public boolean mayHaveWritten() {
+        return bytesWritten > 0 || writeFailedDirty;
+    }
+
     private void ensureWritable() throws IOException {
         if (closed || finished) {
             throw new IOException("HashVerifier is closed");
@@ -43,7 +59,13 @@ public final class HashVerifier extends OutputStream {
     @Override
     public void write(int b) throws IOException {
         ensureWritable();
-        out.write(b);
+        try {
+            out.write(b);
+        } catch (IOException e) {
+            // Fail closed: treat the destination as possibly touched.
+            writeFailedDirty = true;
+            throw e;
+        }
         digest.update((byte) b);
         bytesWritten++;
     }
@@ -51,7 +73,16 @@ public final class HashVerifier extends OutputStream {
     @Override
     public void write(byte[] b, int off, int len) throws IOException {
         ensureWritable();
-        out.write(b, off, len);
+        if (len == 0) {
+            return;
+        }
+        try {
+            out.write(b, off, len);
+        } catch (IOException e) {
+            // OutputStream may have written some of the bytes before failing.
+            writeFailedDirty = true;
+            throw e;
+        }
         digest.update(b, off, len);
         bytesWritten += len;
     }
