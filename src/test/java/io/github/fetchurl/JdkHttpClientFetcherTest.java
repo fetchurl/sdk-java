@@ -126,4 +126,43 @@ class JdkHttpClientFetcherTest {
         JdkHttpClientFetcher fetcher = new JdkHttpClientFetcher(custom);
         assertSame(custom, fetcher.client());
     }
+
+    @Test
+    void rejectsNonPositiveRequestTimeout() {
+        HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new JdkHttpClientFetcher(client, Duration.ZERO));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new JdkHttpClientFetcher(client, Duration.ofSeconds(-1)));
+    }
+
+    @Test
+    void malformedUrlIsIoExceptionNotIllegalArgument() {
+        JdkHttpClientFetcher fetcher = new JdkHttpClientFetcher();
+        IOException ex =
+                assertThrows(
+                        IOException.class,
+                        () -> fetcher.get("not a uri", Collections.emptyMap()));
+        assertTrue(
+                ex.getCause() instanceof IllegalArgumentException,
+                "expected IAE cause, got " + ex.getCause());
+        assertTrue(
+                ex.getMessage() != null && ex.getMessage().startsWith("invalid HTTP request:"),
+                "expected invalid HTTP request message, got " + ex.getMessage());
+    }
+
+    @Test
+    void invalidHeaderNameIsIoException() {
+        JdkHttpClientFetcher fetcher = new JdkHttpClientFetcher();
+        IOException ex =
+                assertThrows(
+                        IOException.class,
+                        () ->
+                                fetcher.get(
+                                        "http://127.0.0.1/",
+                                        Collections.singletonMap("", "value")));
+        assertTrue(ex.getCause() instanceof IllegalArgumentException);
+    }
 }
