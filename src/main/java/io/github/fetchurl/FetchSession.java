@@ -78,6 +78,9 @@ public final class FetchSession {
             if (server == null || server.isBlank()) {
                 continue;
             }
+            // Fail early on CR/LF/etc. — same class of misuse as source URLs in X-Source-Urls.
+            // Blank entries stay skipped (SFV noise); non-blank garbage is operator config error.
+            Sfv.requireNoControlChars(server, "server URL");
             String base = trimTrailingSlashes(server);
             if (base.isEmpty()) {
                 continue;

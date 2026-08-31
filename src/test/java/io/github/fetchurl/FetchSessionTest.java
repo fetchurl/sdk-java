@@ -71,6 +71,35 @@ class FetchSessionTest {
     }
 
     @Test
+    void serverUrlWithControlCharactersRejected() throws Exception {
+        String h = sha256Hex("test".getBytes(StandardCharsets.UTF_8));
+        List<String> servers =
+                Collections.singletonList("http://cache/api/fetchurl/\r\nX-Injected: 1");
+        FetchUrlException ex =
+                assertThrows(
+                        FetchUrlException.class,
+                        () ->
+                                FetchSession.withServers(
+                                        servers, "sha256", h, Collections.singletonList("http://src")));
+        assertTrue(
+                ex.getMessage() != null && ex.getMessage().contains("control"),
+                "expected control-char message, got " + ex.getMessage());
+    }
+
+    @Test
+    void serverUrlWithDelRejected() throws Exception {
+        String h = sha256Hex("test".getBytes(StandardCharsets.UTF_8));
+        assertThrows(
+                FetchUrlException.class,
+                () ->
+                        FetchSession.withServers(
+                                Collections.singletonList("http://cache\u007f/api/fetchurl"),
+                                "sha256",
+                                h,
+                                Collections.singletonList("http://src")));
+    }
+
+    @Test
     void unsupportedAlgo() {
         assertThrows(
                 UnsupportedAlgorithmException.class,
