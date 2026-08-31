@@ -3,7 +3,6 @@ package io.github.fetchurl;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Objects;
 
 /** A single fetch attempt with URL and headers. */
 public final class FetchAttempt {
@@ -21,9 +20,17 @@ public final class FetchAttempt {
         } else {
             Map<String, String> copy = new LinkedHashMap<>(headers.size());
             for (Map.Entry<String, String> e : headers.entrySet()) {
-                Objects.requireNonNull(e.getKey(), "header name");
-                Objects.requireNonNull(e.getValue(), "header value");
-                copy.put(e.getKey(), e.getValue());
+                // Same spirit as URL validation: null/blank names and null values fail here
+                // as FetchUrlException instead of NPE or a late HTTP-client IllegalArgumentException.
+                String name = e.getKey();
+                if (name == null || name.isBlank()) {
+                    throw new FetchUrlException("header name must not be blank");
+                }
+                String value = e.getValue();
+                if (value == null) {
+                    throw new FetchUrlException("header value must not be null");
+                }
+                copy.put(name, value);
             }
             this.headers = Collections.unmodifiableMap(copy);
         }

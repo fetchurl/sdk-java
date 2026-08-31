@@ -45,13 +45,32 @@ class FetchAttemptTest {
     void rejectsNullHeaderName() {
         Map<String, String> headers = new HashMap<>();
         headers.put(null, "value");
-        assertThrows(NullPointerException.class, () -> new FetchAttempt("https://x", headers));
+        assertThrows(FetchUrlException.class, () -> new FetchAttempt("https://x", headers));
+    }
+
+    @Test
+    void rejectsBlankHeaderName() {
+        Map<String, String> headers = new HashMap<>();
+        headers.put("  ", "value");
+        assertThrows(FetchUrlException.class, () -> new FetchAttempt("https://x", headers));
+        headers.clear();
+        headers.put("", "value");
+        assertThrows(FetchUrlException.class, () -> new FetchAttempt("https://x", headers));
     }
 
     @Test
     void rejectsNullHeaderValue() {
         Map<String, String> headers = new HashMap<>();
         headers.put("X-Source-Urls", null);
-        assertThrows(NullPointerException.class, () -> new FetchAttempt("https://x", headers));
+        assertThrows(FetchUrlException.class, () -> new FetchAttempt("https://x", headers));
+    }
+
+    @Test
+    void allowsEmptyHeaderValue() {
+        // HTTP field-content may be empty; only null is rejected.
+        Map<String, String> headers = new HashMap<>();
+        headers.put("X-Empty", "");
+        FetchAttempt a = new FetchAttempt("https://x", headers);
+        assertEquals("", a.getHeaders().get("X-Empty"));
     }
 }
