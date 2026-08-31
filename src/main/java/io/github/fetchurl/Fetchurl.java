@@ -71,7 +71,9 @@ public final class Fetchurl {
                 return;
             } catch (Exception e) {
                 lastError = e;
-                if (verifier.getBytesWritten() > 0) {
+                // Include write failures that may have partially delivered bytes to `out`
+                // (OutputStream.write is not atomic) even when getBytesWritten() is still 0.
+                if (verifier.mayHaveWritten()) {
                     session.reportPartial();
                     throw new PartialWriteException(e);
                 }
